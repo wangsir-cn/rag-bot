@@ -62,10 +62,10 @@ flowchart TB
         Rag[RagServiceV2<br/>Prompt+流式生成+引用]
     end
 
-    subgraph DB[(PostgreSQL + pgvector)]
+    subgraph DB[PostgreSQL + pgvector]
         Users[users / ai_models]
         KBDB[knowledge_bases / documents]
-        Chunks[chunks vector(1024) + tsvector]
+        Chunks["chunks vector(1024) + tsvector"]
         Sessions[chat_sessions / chat_messages]
     end
 
