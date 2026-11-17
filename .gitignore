@@ -1,0 +1,28 @@
+# Build artifacts
+target/
+dist/
+node_modules/
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Runtime data
+storage/
+logs/
+*.log
+
+# Environment / secrets
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# WorkBuddy
+.workbuddy/

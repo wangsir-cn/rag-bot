@@ -1,0 +1,137 @@
+server:
+  port: 8090
+  shutdown: graceful
+
+spring:
+  application:
+    name: rag-bot
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ragbot}?characterEncoding=UTF-8&currentSchema=public
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 12
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  # Schema is managed by db/schema.sql (also mounted into the Postgres init dir).
+  # IF NOT EXISTS makes re-running safe; see docs for Flyway migration in production.
+  sql:
+    init:
+      mode: always
+      continue-on-error: true
+      schema-locations: classpath:db/schema.sql
+
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 200MB
+
+  # 邮箱：用于忘记密码重置。未配置时用控制台打印重置链接（开发模式）
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
+  ai:
+    openai:
+      # Point base-url at any OpenAI-compatible endpoint (vLLM, Ollama, DashScope, Moonshot, ...)
+      api-key: ${OPENAI_API_KEY:sk-change-me}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+      chat:
+        options:
+          model: ${LLM_MODEL:gpt-4o-mini}
+          temperature: 0.2
+          max-tokens: 2048
+      embedding:
+        options:
+          model: ${EMBEDDING_MODEL:text-embedding-3-small}
+          # 当前 qwen3.7-text-embedding-flash 实测输出 1024 维；换模型时须同步改 DDL
+          dimensions: ${EMBEDDING_DIMENSIONS:1024}
+
+# ===== 安全 / JWT =====
+security:
+  jwt:
+    secret: ${JWT_SECRET:ragbot-local-dev-secret-key-change-me-in-production-2026}
+    expiration-hours: ${JWT_EXPIRATION_HOURS:24}
+  # 首次启动创建的默认管理员；must-change-password 强制首次登录改密
+  default-admin:
+    username: ${DEFAULT_ADMIN_USERNAME:admin}
+    password: ${DEFAULT_ADMIN_PASSWORD:admin}
+    email: ${DEFAULT_ADMIN_EMAIL:admin@ragbot.local}
+  # 密码重置链接前端地址
+  reset-password-url: ${RESET_PASSWORD_URL:http://localhost:5173/reset-password}
+
+# 邮件发送方（未配置 MAIL_USERNAME 时降级为控制台打印）
+app:
+  mail:
+    from: ${MAIL_FROM:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+rag:
+  storage:
+    # local = 本地磁盘; minio = S3 兼容对象存储
+    type: ${STORAGE_TYPE:minio}
+    path: ${RAG_STORAGE_PATH:./storage}
+    # MinIO / S3 配置（当 type=minio 时生效）
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    bucket: ${MINIO_BUCKET:rag-bot}
+    access-key: ${MINIO_ACCESS_KEY:admin}
+    secret-key: ${MINIO_SECRET_KEY:admin}
+  chunk:
+    # FIXED = fixed-length with overlap; SEMANTIC = paragraph/sentence aware
+    strategy: ${RAG_CHUNK_STRATEGY:SEMANTIC}
+    size: ${RAG_CHUNK_SIZE:800}
+    overlap: ${RAG_CHUNK_OVERLAP:120}
+    min-size: ${RAG_CHUNK_MIN_SIZE:120}
+  retrieval:
+    top-k: ${RAG_TOP_K:8}
+    candidate-k: ${RAG_CANDIDATE_K:30}
+    similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.25}
+    # RRF = reciprocal rank fusion; WEIGHTED = weighted normalized-score fusion
+    fusion: ${RAG_FUSION:RRF}
+    rrf-k: 60
+    vector-weight: 0.65
+    bm25-weight: 0.35
+    rerank:
+      enabled: ${RAG_RERANK_ENABLED:false}
+      model: ${RAG_RERANK_MODEL:bge-reranker-v2-m3}
+      base-url: ${RAG_RERANK_BASE_URL:${OPENAI_BASE_URL:https://api.openai.com}}
+      api-key: ${RAG_RERANK_API_KEY:${OPENAI_API_KEY:sk-change-me}}
+      top-k: ${RAG_RERANK_TOP_K:8}
+  cache:
+    enabled: ${RAG_CACHE_ENABLED:false}
+    similarity-threshold: 0.97
+    ttl-hours: 24
+  prompt:
+    # 严格 grounded 模式：仅基于上下文回答，无法回答时明确说明
+    system: |
+      你是一个严谨的企业知识库助手。你的任务是根据提供的资料准确回答用户问题。
+
+      规则：
+      1. 只使用 <context> 中的信息作答，禁止使用你的先验知识补充事实。
+      2. 如果 <context> 中没有足够信息，直接回答"根据提供的资料无法回答该问题"，不要编造。
+      3. 在结论句末尾标注引用编号，格式如 [1]、[2]；引用编号对应 <context> 中的编号。
+      4. 同一事实被多个来源支持时，列出全部相关引用。
+      5. 回答简洁、条理清晰，使用中文。
+    # 通用问答模式：未选择知识库时使用，允许模型使用自身知识作答
+    general-system: |
+      你是一个友好、专业的 AI 助手。请直接、准确地回答用户问题。
+      回答简洁、条理清晰，使用中文；不确定时如实说明，不要编造事实。
