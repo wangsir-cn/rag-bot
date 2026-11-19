@@ -151,12 +151,6 @@ public class ChunkRepositoryV2 {
         return v == null ? 0 : v;
     }
 
-    /** 取知识库已有切片类型（去重）；用于保证一个库内 TEXT/QA 不混用 */
-    public List<String> distinctTypesInKb(UUID kbId) {
-        return jdbc.query("SELECT DISTINCT chunk_type FROM chunks WHERE knowledge_base_id = ?::uuid",
-                (rs, n) -> rs.getString(1), kbId);
-    }
-
     /** 取切片详情（含所属文档名）用于跳转展示 */
     public java.util.Optional<ChunkRecordV2> findById(UUID id) {
         return jdbc.query(BASE_SELECT + " FROM chunks c WHERE c.id = ?::uuid", mapper(), id)

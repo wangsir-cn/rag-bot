@@ -72,7 +72,8 @@ public class IngestionWorkerV2 {
             if ("QA".equalsIgnoreCase(doc.fileKind())) {
                 // QA 文件：一行一切片，且同一文件只支持 QA 切片
                 List<QaParsingService.QaRow> rows = qaParsingService.parse(filePath);
-                if (rows.isEmpty()) throw new IllegalStateException("QA 文件未解析到有效问答对");
+                if (rows.isEmpty()) throw new IllegalStateException(
+                        "QA 文件未解析到有效问答对（需要两列：问题、答案；Excel 取第一个工作表 A/B 列）");
                 int idx = 0;
                 for (var row : rows) {
                     Map<String, Object> meta = new HashMap<>(baseMeta);

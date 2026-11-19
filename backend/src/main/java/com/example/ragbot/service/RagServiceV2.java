@@ -8,6 +8,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -59,9 +60,11 @@ public class RagServiceV2 {
             } else {
                 context.append(c.content()).append("\n\n");
             }
+            // QA 的引用卡片要把「问 + 答」完整展示，因此问题不做 160 字截断；TEXT 仍用摘要
+            String previewText = "QA".equalsIgnoreCase(c.chunkType()) ? c.content() : preview(c.content());
             citations.add(new Citation(
                     i + 1, c.id().toString(), c.documentId().toString(), docName,
-                    c.chunkIndex(), rc.score(), preview(c.content()),
+                    c.chunkIndex(), rc.score(), previewText,
                     c.chunkType(), c.answer(), kbId == null ? null : kbId.toString()));
         }
 
@@ -74,8 +77,23 @@ public class RagServiceV2 {
         return new RagContext(properties.getPrompt().getSystem(), userPrompt, citations, outcome);
     }
 
-    /** 用指定用户的 chat 模型流式生成 */
+    /**
+     * 用指定用户的 chat 模型流式生成。
+     * 返回完整 ChatResponse，以便同时拿到正文 (getResult().getOutput().getText())
+     * 和推理模型的思考过程 (getResult().getOutput().getMetadata().get("reasoningContent"))。
+     */
+    public Flux<ChatResponse> streamWithReasoning(RagContext context, UUID userId,
+                                                  List<ChatRequestV2.HistoryMessage> history) {
+        return buildSpec(context, userId, history).stream().chatResponse();
+    }
+
+    /** 只取正文的流（保留给不需要思考过程的调用方） */
     public Flux<String> stream(RagContext context, UUID userId, List<ChatRequestV2.HistoryMessage> history) {
+        return buildSpec(context, userId, history).stream().content();
+    }
+
+    private ChatClient.ChatClientRequestSpec buildSpec(RagContext context, UUID userId,
+                                                        List<ChatRequestV2.HistoryMessage> history) {
         ChatClient chatClient = clientFactory.chatClient(resolver.chatFor(userId));
         var spec = chatClient.prompt().system(context.systemPrompt());
         if (history != null && !history.isEmpty()) {
@@ -87,7 +105,7 @@ public class RagServiceV2 {
             }
             if (!messages.isEmpty()) spec.messages(messages);
         }
-        return spec.user(context.userPrompt()).stream().content();
+        return spec.user(context.userPrompt());
     }
 
     public String call(RagContext context, UUID userId) {

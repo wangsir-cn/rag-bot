@@ -26,6 +26,7 @@ function emptyKbForm() {
 const uploadDialog = ref(false)
 const uploadKind = ref('TEXT')
 const uploadFile = ref(null)
+const uploadRef = ref(null)
 const uploading = ref(false)
 const progress = ref(0)
 const jumpChunkId = ref(null)
@@ -122,8 +123,16 @@ async function removeKb(kb) {
   loadKb()
 }
 
+function resetUpload() {
+  uploadFile.value = null
+  progress.value = 0
+  uploadRef.value?.clearFiles()
+}
+
 function openUpload(kind) {
-  uploadKind.value = kind; uploadFile.value = null; progress.value = 0; uploadDialog.value = true
+  uploadKind.value = kind
+  resetUpload()
+  uploadDialog.value = true
 }
 
 async function doUpload() {
@@ -133,6 +142,7 @@ async function doUpload() {
     await uploadDocument(selectedKb.value.id, uploadFile.value, uploadKind.value, (p) => progress.value = p)
     ElMessage.success('上传成功，正在后台解析')
     uploadDialog.value = false
+    resetUpload()
     await loadDocs()
     startPolling()
   } finally { uploading.value = false }
@@ -261,10 +271,12 @@ function viewDocChunks(doc) {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="uploadDialog" :title="uploadKind === 'QA' ? '上传 QA 文件' : '上传文本文件'" width="480px">
+    <el-dialog v-model="uploadDialog" :title="uploadKind === 'QA' ? '上传 QA 文件' : '上传文本文件'" width="480px"
+               @closed="resetUpload">
       <el-alert v-if="uploadKind === 'QA'" type="info" show-icon :closable="false" style="margin-bottom:12px"
-        title="QA 文件每行一条“问题,答案”，一行即一个切片。可先下载模板填写。" />
-      <el-upload drag :auto-upload="false" :limit="1" :on-change="(f) => uploadFile = f.raw" accept=".txt,.md,.pdf,.doc,.docx,.csv,.tsv">
+        title="支持 Excel（.xlsx/.xls，第一个工作表 A 列=问题、B 列=答案）或纯文本（每行一条“问题,答案”）。一行即一个切片，可先下载模板。" />
+      <el-upload ref="uploadRef" drag :auto-upload="false" :limit="1" :on-change="(f) => uploadFile = f.raw"
+                 :accept="uploadKind === 'QA' ? '.csv,.tsv,.txt,.md,.xlsx,.xls' : '.pdf,.doc,.docx,.txt,.md'">
         <el-icon size="40"><UploadFilled /></el-icon>
         <div>拖拽文件到此处，或 <em>点击选择</em></div>
       </el-upload>

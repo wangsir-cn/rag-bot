@@ -29,15 +29,21 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/actuator/**").permitAll()
+                // 错误页必须放行：否则异常转发到 /error 时会被再次拦截，
+                // 响应已提交时 ExceptionTranslationFilter 会抛
+                // "Unable to handle ... because the response is already committed"
+                .requestMatchers("/error").permitAll()
                 .anyRequest().authenticated()
             )
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((req, res, e) -> {
+                    if (res.isCommitted()) return;
                     res.setStatus(HttpStatus.UNAUTHORIZED.value());
                     res.setContentType("application/json;charset=UTF-8");
                     res.getWriter().write("{\"error\":\"未登录或登录已过期\"}");
                 })
                 .accessDeniedHandler((req, res, e) -> {
+                    if (res.isCommitted()) return;
                     res.setStatus(HttpStatus.FORBIDDEN.value());
                     res.setContentType("application/json;charset=UTF-8");
                     res.getWriter().write("{\"error\":\"没有权限执行此操作\"}");

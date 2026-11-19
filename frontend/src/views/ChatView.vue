@@ -65,6 +65,14 @@ function scrollToBottom() {
   nextTick(() => { if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight })
 }
 
+/** 思考框内容超出时跟随最新文字滚动到底部 */
+function scrollReasoningToBottom(msgId) {
+  nextTick(() => {
+    const box = messagesRef.value?.querySelector(`.reasoning-text[data-mid="${msgId}"]`)
+    if (box) box.scrollTop = box.scrollHeight
+  })
+}
+
 async function send(questionText) {
   const question = (questionText ?? input.value).trim()
   if (!question || sending.value) return
@@ -72,7 +80,7 @@ async function send(questionText) {
   if (isNew && messages.value.length <= 1) messages.value = []
 
   messages.value.push({ id: Date.now() + '-u', role: 'user', content: question, citations: [], streaming: false })
-  messages.value.push({ id: Date.now() + '-a', role: 'assistant', content: '', citations: [], meta: null, streaming: true, error: false })
+  messages.value.push({ id: Date.now() + '-a', role: 'assistant', content: '', reasoning: '', reasoningOpen: true, citations: [], meta: null, streaming: true, error: false })
   const answer = messages.value[messages.value.length - 1]
   input.value = ''
   sending.value = true
@@ -91,7 +99,18 @@ async function send(questionText) {
     await streamChat(payload, {
       signal: controller.signal,
       onReferences: (citations) => { answer.citations = citations || [] },
-      onDelta: (token) => { answer.content += typeof token === 'string' ? token : String(token); scrollToBottom() },
+      onReasoning: (text) => {
+        answer.reasoning = (answer.reasoning || '') + (typeof text === 'string' ? text : String(text))
+        if (answer.streaming) answer.reasoningOpen = true   // 思考阶段保持展开
+        scrollReasoningToBottom(answer.id)                  // 思考框跟随最新文字
+        scrollToBottom()
+      },
+      onDelta: (token) => {
+        // 正文开始输出即自动收起思考过程（仅收起一次，之后尊重用户手动展开）
+        if (answer.content === '' && answer.reasoning) answer.reasoningOpen = false
+        answer.content += typeof token === 'string' ? token : String(token)
+        scrollToBottom()
+      },
       onDone: async (meta) => {
         answer.meta = meta
         if (meta.sessionId) {
@@ -105,6 +124,8 @@ async function send(questionText) {
   } catch (e) {
     if (e.name !== 'AbortError') { answer.error = true; answer.content += `\n\n[请求失败] ${e.message}` }
   } finally {
+    // 流结束（正常/出错/取消）后思考过程默认收起，用户可再手动展开查看
+    if (answer.reasoning) answer.reasoningOpen = false
     answer.streaming = false; sending.value = false; controller = null; scrollToBottom()
   }
 }
@@ -220,7 +241,15 @@ function gotoChunk(citation) {
             </div>
             <div class="message-content">
               <div class="message-author">{{ m.role === 'user' ? '我' : 'RAG 助手' }}</div>
-              <div class="message-bubble">{{ m.content }}<span v-if="m.streaming" class="streaming-caret"></span></div>
+              <div v-if="m.reasoning" class="reasoning-box">
+                <div class="reasoning-title" @click="m.reasoningOpen = !m.reasoningOpen">
+                  <el-icon><ChatDotRound /></el-icon>
+                  <span>{{ m.streaming && !m.content ? '思考中…' : '思考过程' }}</span>
+                  <el-icon class="reasoning-toggle" :class="{ open: m.reasoningOpen }"><ArrowDown /></el-icon>
+                </div>
+                <div v-show="m.reasoningOpen" class="reasoning-text" :data-mid="m.id">{{ m.reasoning }}<span v-if="m.streaming && !m.content" class="streaming-caret"></span></div>
+              </div>
+              <div v-if="m.content || !m.streaming" class="message-bubble">{{ m.content }}<span v-if="m.streaming" class="streaming-caret"></span></div>
               <div v-if="m.citations?.length" class="citations">
                 <div v-for="c in m.citations" :key="c.chunkId" class="citation-with-jump">
                   <CitationCard :citation="c" />
@@ -319,6 +348,12 @@ function gotoChunk(citation) {
 .message-author { font-size: 12px; color: #909399; margin: 0 0 6px 2px; }
 .message-row.user .message-author { text-align: right; margin-right: 2px; }
 .message-bubble { background: #fff; border: 1px solid var(--rag-border); border-radius: 4px 14px 14px 14px; padding: 14px 16px; line-height: 1.8; font-size: 14px; white-space: pre-wrap; word-break: break-word; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03); }
+.reasoning-box { background: #f7f8fa; border: 1px dashed #dcdfe6; border-radius: 4px 14px 14px 14px; padding: 10px 14px; margin-bottom: 8px; }
+.reasoning-title { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #909399; user-select: none; cursor: pointer; }
+.reasoning-title:hover { color: var(--rag-primary); }
+.reasoning-toggle { margin-left: auto; transition: transform 0.2s; transform: rotate(-90deg); }
+.reasoning-toggle.open { transform: rotate(0deg); }
+.reasoning-text { font-size: 13px; line-height: 1.7; color: #6b7280; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow-y: auto; margin-top: 6px; }
 .message-row.user .message-bubble { background: linear-gradient(135deg, #409eff, #66b1ff); border-color: transparent; color: #fff; border-radius: 14px 4px 14px 14px; }
 .streaming-caret { display: inline-block; width: 7px; height: 15px; background: var(--rag-primary); vertical-align: middle; margin-left: 3px; animation: blink 0.8s infinite; }
 @keyframes blink { 50% { opacity: 0; } }

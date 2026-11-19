@@ -119,10 +119,32 @@ function gotoChunk(hit) {
             <template #default="{ row }">{{ row.score?.toFixed?.(4) ?? row.score }}</template>
           </el-table-column>
           <el-table-column prop="documentName" label="来源文档" width="160" />
+          <el-table-column label="类型" width="70">
+            <template #default="{ row }">
+              <span class="chunk-kind" :class="row.chunkType === 'QA' ? 'kind-qa' : 'kind-text'">
+                {{ row.chunkType === 'QA' ? 'QA' : 'TEXT' }}
+              </span>
+            </template>
+          </el-table-column>
           <el-table-column label="排名来源" width="140">
             <template #default="{ row }">向量#{{ row.vectorRank }} / 全文#{{ row.bm25Rank }}</template>
           </el-table-column>
-          <el-table-column prop="content" label="片段内容" min-width="300" show-overflow-tooltip />
+          <el-table-column label="片段内容" min-width="340">
+            <template #default="{ row }">
+              <!-- QA 切片：问题 + 答案成对完整展示 -->
+              <template v-if="row.chunkType === 'QA'">
+                <div class="qa-line">
+                  <span class="qa-label qa-label-q">问</span>
+                  <span class="qa-text">{{ row.content }}</span>
+                </div>
+                <div class="qa-line">
+                  <span class="qa-label qa-label-a">答</span>
+                  <span class="qa-text">{{ row.answer }}</span>
+                </div>
+              </template>
+              <div v-else class="hit-content scrollable">{{ row.content }}</div>
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="90">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="gotoChunk(row)">跳转</el-button>
@@ -144,4 +166,21 @@ function gotoChunk(hit) {
   background: #f8f9fb; border-radius: 6px;
 }
 .applied-tag { font-family: monospace; }
+
+/* 切片类型标记与 QA 成对展示 */
+.chunk-kind {
+  display: inline-block; font-size: 11px; line-height: 16px; padding: 0 6px;
+  border-radius: 4px; font-weight: 600;
+}
+.kind-qa { color: #0f766e; background: #ccfbf1; }
+.kind-text { color: #475569; background: #e2e8f0; }
+.qa-line { display: flex; gap: 6px; margin: 2px 0; font-size: 13px; line-height: 1.65; color: #4b5563; }
+.qa-label {
+  flex: none; width: 18px; height: 18px; border-radius: 4px; margin-top: 2px;
+  font-size: 11px; line-height: 18px; text-align: center; font-weight: 600;
+}
+.qa-label-q { color: #1d4ed8; background: #e0e7ff; }
+.qa-label-a { color: #b45309; background: #fef3c7; }
+.qa-text { white-space: pre-wrap; word-break: break-word; }
+.hit-content.scrollable { max-height: 108px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
 </style>

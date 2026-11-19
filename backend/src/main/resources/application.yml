@@ -6,6 +6,20 @@ spring:
   application:
     name: rag-bot
 
+  mvc:
+    async:
+      # SSE 流式回答可能远超容器默认 30s 异步超时。
+      # 超时后 Tomcat 会强制提交响应，后续写出会抛 "response is already committed"。
+      request-timeout: 600s
+
+  security:
+    filter:
+      # 安全链只在最初的 REQUEST 分发上执行。
+      # 默认情况下 Spring Boot 还会在 ASYNC/ERROR 分发上再跑一遍；
+      # 那时 JwtAuthenticationFilter 不会重复执行，安全上下文为空，
+      # AuthorizationFilter 会抛 Access Denied，而响应已提交无法写 401。
+      dispatcher-types: REQUEST
+
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ragbot}?characterEncoding=UTF-8&currentSchema=public
     username: ${DB_USER:postgres}
@@ -51,7 +65,10 @@ spring:
         options:
           model: ${LLM_MODEL:gpt-4o-mini}
           temperature: 0.2
-          max-tokens: 2048
+          # 推理模型的思考 token 也计入 max_tokens。GLM-5.3 写 5000 字时
+          # 实测 reasoning 约 1 万 token，8192 会被思考全部占满、正文只剩 "#"。
+          # 32768 足够正文生成；设为 <=0 则不传该参数，使用模型/服务端默认上限。
+          max-tokens: ${LLM_MAX_TOKENS:32768}
       embedding:
         options:
           model: ${EMBEDDING_MODEL:text-embedding-3-small}
@@ -95,6 +112,12 @@ rag:
     bucket: ${MINIO_BUCKET:rag-bot}
     access-key: ${MINIO_ACCESS_KEY:admin}
     secret-key: ${MINIO_SECRET_KEY:admin}
+  embedding:
+    # 单次提交给向量接口的文本条数。qwen3-embedding 系列限制 35 条/次，超出会返回
+    # 400 InvalidParameter: batch size is invalid。代码在命中该错误时还会自动二分重试。
+    batch-size: ${RAG_EMBEDDING_BATCH_SIZE:16}
+    # 单次提交的字符总量，防止长切片撞上厂商的 token 上限
+    batch-chars: ${RAG_EMBEDDING_BATCH_CHARS:8000}
   chunk:
     # FIXED = fixed-length with overlap; SEMANTIC = paragraph/sentence aware
     strategy: ${RAG_CHUNK_STRATEGY:SEMANTIC}

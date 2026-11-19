@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 
 @RestController
 @RequestMapping("/api/chat")
@@ -69,9 +70,35 @@ public class ChatControllerV2 {
             }
 
             StringBuilder fullAnswer = new StringBuilder();
-            Flux<ServerSentEvent<String>> deltas = ragService.stream(context, userId, history)
-                    .doOnNext(fullAnswer::append)
-                    .map(token -> event("delta", json(token)));
+            StringBuilder reasoningBuffer = new StringBuilder();
+            AtomicReference<String> finishReason = new AtomicReference<>();
+            // 正文与"思考过程"分成两种 SSE 事件：推理模型思考时前端也有内容可显示，
+            // 避免长时间空白被误认为卡死。思考内容绝不写入最终答案，也不入库。
+            Flux<ServerSentEvent<String>> deltas = ragService.streamWithReasoning(context, userId, history)
+                    .flatMap(response -> {
+                        if (response == null || response.getResult() == null
+                                || response.getResult().getOutput() == null) {
+                            return Flux.empty();
+                        }
+                        var result = response.getResult();
+                        if (result.getMetadata() != null) {
+                            String reason = result.getMetadata().getFinishReason();
+                            if (reason != null && !reason.isBlank()) finishReason.set(reason);
+                        }
+                        var output = result.getOutput();
+                        List<ServerSentEvent<String>> events = new ArrayList<>();
+                        Object reasoning = output.getMetadata().get("reasoningContent");
+                        if (reasoning instanceof String r && !r.isEmpty()) {
+                            reasoningBuffer.append(r);
+                            events.add(event("reasoning", json(r)));
+                        }
+                        String text = output.getText();
+                        if (text != null && !text.isEmpty()) {
+                            fullAnswer.append(text);
+                            events.add(event("delta", json(text)));
+                        }
+                        return Flux.fromIterable(events);
+                    });
 
             Map<String, Object> meta = new LinkedHashMap<>();
             meta.put("sessionId", sessionId.toString());
@@ -84,8 +111,27 @@ public class ChatControllerV2 {
 
             // 生成完成后保存消息（用户问题 + AI 回答 + 引用）
             Flux<ServerSentEvent<String>> saved = Flux.defer(() -> {
+                String answer = fullAnswer.toString();
+                String reason = finishReason.get();
+                log.info("RAG 生成完成 question={} reasoningChars={} answerChars={} finishReason={}",
+                        question, reasoningBuffer.length(), answer.length(), reason);
+
+                // reasoning 只是思考过程，任何时候都不能当正文入库或回填。
+                // 若正文为空/只有占位符且 finish_reason=length，通常是思考 token 用尽，明确报错而不是伪装成回答。
+                boolean noAnswer = answer.isBlank()
+                        || ("length".equalsIgnoreCase(reason) && answer.strip().length() <= 2);
+                if (noAnswer) {
+                    log.error("RAG 未生成正文 question={} finishReason={} reasoningChars={}",
+                            question, reason, reasoningBuffer.length());
+                    String message = "length".equalsIgnoreCase(reason)
+                            ? "模型思考过程耗尽了输出额度，正文未生成。请调大 LLM_MAX_TOKENS 后重试。"
+                            : "模型未返回正文，请重试。";
+                    return Flux.just(event("error", json(Map.of("error", message))));
+                }
+
                 sessionService.saveUserMessage(sessionId, question);
-                sessionService.saveAssistantMessage(sessionId, fullAnswer.toString(), citationsJson(context.citations()));
+                sessionService.saveAssistantMessage(sessionId, answer, citationsJson(context.citations()));
+                meta.put("finishReason", reason == null ? "" : reason);
                 return Flux.just(event("done", json(meta)));
             });
 
@@ -97,7 +143,8 @@ public class ChatControllerV2 {
                 log.error("RAG 流式生成失败 question={}", question, e);
                 return Flux.just(event("error", json(Map.of("error",
                         e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()))));
-            });
+            }).doOnCancel(() ->
+                    log.warn("RAG 流式生成被客户端取消 question={}", question));
         } catch (Exception e) {
             log.error("RAG 请求处理失败 question={}", question, e);
             return Flux.just(event("error", json(Map.of("error",
@@ -117,7 +164,7 @@ public class ChatControllerV2 {
                     c.id().toString(), c.documentId().toString(),
                     String.valueOf(c.metadata().getOrDefault("docName", "未知文档")),
                     c.chunkIndex(), rc.score(), c.content(), c.metadata(),
-                    rc.vectorRank(), rc.bm25Rank());
+                    rc.vectorRank(), rc.bm25Rank(), c.chunkType(), c.answer());
         }).toList();
         return new RetrievalDebugResponse(hits, outcome.vectorCount(), outcome.bm25Count(),
                 outcome.fusion(), outcome.vectorMs(), outcome.bm25Ms(), outcome.totalMs(),

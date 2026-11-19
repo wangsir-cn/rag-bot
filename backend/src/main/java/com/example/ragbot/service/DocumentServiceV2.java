@@ -56,8 +56,7 @@ public class DocumentServiceV2 {
         if (!"TEXT".equals(fileKind) && !"QA".equals(fileKind)) {
             throw new IllegalArgumentException("文件类型只能是 TEXT 或 QA");
         }
-        // 同一知识库只允许一种切片类型，避免 TEXT/QA 混用导致检索语义混乱
-        enforceChunkType(kbId, fileKind);
+        // TEXT 与 QA 可以共存于同一知识库：检索时会按 chunkType 分别拼装上下文。
 
         String storedName = UUID.randomUUID() + extension;
         String relativePath = storageService.save(file, storedName);
@@ -125,7 +124,6 @@ public class DocumentServiceV2 {
         if ("QA".equalsIgnoreCase(chunkType) && (answer == null || answer.isBlank())) {
             throw new IllegalArgumentException("QA 切片必须填写答案");
         }
-        enforceChunkType(kbId, chunkType.toUpperCase());
         // 手动切片归属一个特殊文档（用户维度、每个 kb 一条）
         UUID manualDocId = ensureManualDocument(kbId, userId, chunkType);
         int idx = chunkRepo.nextIndex(manualDocId);
@@ -180,15 +178,6 @@ public class DocumentServiceV2 {
         return new KbDtos.ChunkVO(c.id(), c.documentId(), c.chunkIndex(), c.chunkType(),
                 c.content(), c.answer(), c.metadata(),
                 c.createdAt() == null ? "" : c.createdAt().toString());
-    }
-
-    /** 校验知识库切片类型一致性：一个库内不能混用 TEXT 与 QA */
-    private void enforceChunkType(UUID kbId, String kind) {
-        var existing = chunkRepo.distinctTypesInKb(kbId);
-        if (!existing.isEmpty() && !existing.contains(kind)) {
-            throw new IllegalStateException("该知识库已有 " + String.join("/", existing)
-                    + " 类型切片，不能混入 " + kind + " 类型。请新建知识库。");
-        }
     }
 
     private String sanitize(String filename) {

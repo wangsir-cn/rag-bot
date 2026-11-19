@@ -127,6 +127,7 @@ function handleFrame(frame, handlers) {
   try { data = JSON.parse(raw) } catch (_) { /* keep raw */ }
   switch (event) {
     case 'references': handlers.onReferences?.(data); break
+    case 'reasoning': handlers.onReasoning?.(data); break
     case 'delta': handlers.onDelta?.(data); break
     case 'done': handlers.onDone?.(data); return true
     case 'error': handlers.onError?.(data?.error || raw); return true

@@ -22,6 +22,9 @@ public record RetrievalDebugResponse(
             String content,
             Map<String, Object> metadata,
             int vectorRank,
-            int bm25Rank
+            int bm25Rank,
+            /** TEXT / QA；QA 时 content=问题、answer=答案，调试页需要成对展示 */
+            String chunkType,
+            String answer
     ) {}
 }
